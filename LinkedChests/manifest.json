@@ -1,8 +1,8 @@
 {
   "Name": "Linked Chests",
   "Author": "Koko",
-  "Version": "1.2.0",
-  "Description": "相邻箱子自动链接，一键整理时将所有链接箱子的物品按系统规则合并排序并重新装填。工作台可覆盖当前场景的所有箱子。",
+  "Version": "1.3.0",
+  "Description": "相邻箱子联排整理 + 工作台全场景覆盖 + 滚轮虚拟切箱。打开链接箱子后滚轮切换视角，真实物品不动。",
   "UniqueID": "Koko.LinkedChests",
   "EntryDll": "LinkedChests.dll",
   "MinimumApiVersion": "4.0.0",

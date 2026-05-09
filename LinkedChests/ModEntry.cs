@@ -31,6 +31,7 @@ namespace LinkedChests
         public bool EnableLinkedSort { get; set; } = true;
         public bool ShowNotification { get; set; } = true;
         public bool EnableWorkbenchRangeBoost { get; set; } = true;
+        public bool EnableScrollSwitch { get; set; } = true;
     }
 
     public class ModEntry : Mod
@@ -52,6 +53,8 @@ namespace LinkedChests
             string features = "相邻箱子联排";
             if (Config.EnableWorkbenchRangeBoost)
                 features += " + 工作台全场景覆盖";
+            if (Config.EnableScrollSwitch)
+                features += " + 滚轮切箱";
             Monitor.Log($"Linked Chests 已加载！{features}。", LogLevel.Info);
         }
 
