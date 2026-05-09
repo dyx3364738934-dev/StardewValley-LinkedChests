@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using HarmonyLib;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using StardewValley;
 using StardewValley.Inventories;
 using StardewValley.Menus;
@@ -21,6 +22,10 @@ namespace LinkedChests
         // 运行时反射缓存的 CraftingPage 字段信息
         private static FieldInfo? _craftingListField;
 
+        // 虚拟滚轮
+        private static List<(Chest chest, Vector2 tile)>? _linkedGroup;
+        private static int _groupIndex;
+
         public static void Apply(Harmony harmony)
         {
             // ════════════════════════════════════════════
@@ -32,6 +37,7 @@ namespace LinkedChests
             // 补丁 2：工作台 → 当前场景箱子全覆盖
             // ════════════════════════════════════════════
             ApplyWorkbenchPatch(harmony);
+            ApplyScrollPatch(harmony);
 
             // 运行时发现 CraftingPage 中的箱子列表字段
             DiscoverCraftingField();
@@ -218,45 +224,112 @@ namespace LinkedChests
         }
 
         /// <summary>
-        /// Postfix：拦截 getContainerContents() 的返回值，替换为全场景箱子物品
-        /// getContainerContents 每次调用时原版会重建列表，我们直接替换结果避免物品重复
+        /// Postfix：工作台打开时注入全场景箱子物品，保留玩家背包
         /// </summary>
-        private static void Postfix_getContainerContents(ref IList<Item> __result)
+        private static void Postfix_getContainerContents(CraftingPage __instance, ref IList<Item> __result)
         {
-            if (!ModEntry.Instance.Config.EnableWorkbenchRangeBoost)
-                return;
-
+            if (!ModEntry.Instance.Config.EnableWorkbenchRangeBoost) return;
             try
             {
-                var location = Game1.player?.currentLocation;
-                if (location == null)
-                    return;
+                var sf = typeof(CraftingPage).GetField("_standaloneMenu", BindingFlags.Instance | BindingFlags.NonPublic);
+                if (sf == null || !(bool)sf.GetValue(__instance)!) return;
+                var cf = typeof(CraftingPage).GetField("cooking", BindingFlags.Instance | BindingFlags.NonPublic);
+                if (cf != null && (bool)cf.GetValue(__instance)!) return;
+                var loc = Game1.player?.currentLocation; if (loc == null) return;
 
-                // 重建物品列表：遍历当前场景所有箱子
-                var allItems = new List<Item>();
-
-                foreach (var pair in location.objects.Pairs)
+                // 追加场景箱子到 _materialContainers（消耗用）
+                if (_craftingListField != null)
                 {
-                    if (pair.Value is Chest chest)
-                    {
-                        for (int i = 0; i < chest.Items.Count; i++)
-                        {
-                            var item = chest.Items[i];
-                            if (item != null)
-                                allItems.Add(item);
-                        }
-                    }
+                    var mc = (System.Collections.IList)_craftingListField.GetValue(__instance)!;
+                    var ex = new HashSet<object>(); foreach (var i in mc) ex.Add(i);
+                    foreach (var p in loc.objects.Pairs) if (p.Value is Chest cc && ex.Add(cc.Items)) mc.Add(cc.Items);
                 }
+                // 追加场景箱子物品到 __result（显示用，每次重建）
+                var seen = new HashSet<Item>(__result);
+                foreach (var p in loc.objects.Pairs) if (p.Value is Chest cc) for (int i = 0; i < cc.Items.Count; i++) if (cc.Items[i] is Item it && seen.Add(it)) __result.Add(it);
+            }
+            catch { }
+        }
 
-                // 替换返回值（原版相邻箱子也在场景中，不会丢失）
-                __result = allItems;
-            }
-            catch (Exception ex)
+        // ===== 补丁 3：虚拟滚轮（替换 context/callback，物品不动） =====
+        private static void ApplyScrollPatch(Harmony harmony)
+        {
+            var showMenu = AccessTools.Method(typeof(Chest), "ShowMenu");
+            if (showMenu != null) harmony.Patch(showMenu, postfix: new HarmonyMethod(typeof(HarmonyPatches), nameof(Postfix_ShowMenu)));
+            var scroll = AccessTools.Method(typeof(IClickableMenu), "receiveScrollWheelAction", new[] { typeof(int) });
+            if (scroll != null) harmony.Patch(scroll, prefix: new HarmonyMethod(typeof(HarmonyPatches), nameof(Prefix_ScrollWheel)));
+            var close = AccessTools.Method(typeof(ItemGrabMenu), "emergencyShutDown")
+                ?? AccessTools.Method(typeof(IClickableMenu), "exitThisMenuNoSound")
+                ?? AccessTools.Method(typeof(IClickableMenu), "exitThisMenu");
+            if (close != null) harmony.Patch(close, postfix: new HarmonyMethod(typeof(HarmonyPatches), nameof(Postfix_CloseCleanup)));
+
+            var draw = AccessTools.Method(typeof(ItemGrabMenu), "draw", new[] { typeof(SpriteBatch) });
+            if (draw != null) harmony.Patch(draw, postfix: new HarmonyMethod(typeof(HarmonyPatches), nameof(Postfix_DrawIndex)));
+        }
+
+        private static void Postfix_ShowMenu(Chest __instance)
+        {
+            if (!ModEntry.Instance.Config.EnableScrollSwitch) return;
+            try
             {
-                ModEntry.Instance.Monitor.Log(
-                    $"[工作台] getContainerContents 注入失败: {ex.Message}",
-                    StardewModdingAPI.LogLevel.Error);
+                var loc = Game1.player?.currentLocation; if (loc == null) return;
+                var group = ChestLinker.FindLinkedChestsWithTiles(__instance, loc);
+                if (group.Count <= 1) return;
+                group.Sort((a, b) => { int y = a.tile.Y.CompareTo(b.tile.Y); return y != 0 ? y : a.tile.X.CompareTo(b.tile.X); });
+                _linkedGroup = group;
+                _groupIndex = group.FindIndex(t => t.chest == __instance);
             }
+            catch { }
+        }
+
+        private static bool Prefix_ScrollWheel(IClickableMenu __instance, int direction)
+        {
+            if (_linkedGroup == null || __instance is not ItemGrabMenu grab) return true;
+
+            int n = _linkedGroup.Count;
+            _groupIndex = (_groupIndex + (direction > 0 ? -1 : 1) + n) % n;
+            var target = _linkedGroup[_groupIndex].chest;
+
+            // 替换 context
+            typeof(ItemGrabMenu).GetField("context", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+                ?.SetValue(grab, target);
+
+            // 替换 actualInventory
+            var itemsMenu = grab.ItemsToGrabMenu;
+            if (itemsMenu != null) itemsMenu.actualInventory = target.Items;
+
+            // 替换 behavior 回调
+            var bt = typeof(ItemGrabMenu).GetNestedType("behaviorOnItemSelect", BindingFlags.Public | BindingFlags.NonPublic);
+            if (bt != null)
+            {
+                foreach (var f in typeof(ItemGrabMenu).GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public))
+                {
+                    if (f.FieldType == bt && f.GetValue(grab) is Delegate d && d.Target is Chest)
+                        f.SetValue(grab, Delegate.CreateDelegate(bt, target, d.Method));
+                }
+            }
+            return false;
+        }
+
+        private static void Postfix_CloseCleanup()
+        {
+            _linkedGroup = null; _groupIndex = 0;
+        }
+
+        private static void Postfix_DrawIndex(ItemGrabMenu __instance)
+        {
+            if (_linkedGroup == null) return;
+            try
+            {
+                string text = $"{_groupIndex + 1}/{_linkedGroup.Count}";
+                int x = __instance.ItemsToGrabMenu.xPositionOnScreen - 48;
+                int y = __instance.ItemsToGrabMenu.yPositionOnScreen - 28;
+                int w = (int)Game1.smallFont.MeasureString(text).X + 16;
+                Game1.spriteBatch.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, w, 24), Color.Black * 0.55f);
+                Game1.spriteBatch.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, w, 2), Color.Gold);
+                Utility.drawTextWithShadow(Game1.spriteBatch, text, Game1.smallFont, new Vector2(x + 8, y + 3), Color.White, 1f, 1f, -1, -1, 0.5f);
+            }
+            catch { }
         }
     }
 }
