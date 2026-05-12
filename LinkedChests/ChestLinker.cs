@@ -20,10 +20,13 @@ namespace LinkedChests
             new Vector2(-1,  1), new Vector2(0,  1), new Vector2(1,  1),
         };
 
-        /// <summary>获取箱子标准槽位数（BigChest: 70, 普通箱: 36）</summary>
+        /// <summary>
+        /// 获取箱子实际槽位数（BigChest=70, 普通箱=36, 祝尼魔箱=9 等）
+        /// 使用 Chest 内置的 GetActualCapacity()，而非类型名字符串比较
+        /// </summary>
         private static int GetChestCapacity(Chest chest)
         {
-            return chest.GetType().Name == "BigChest" ? 70 : 36;
+            return chest.GetActualCapacity();
         }
 
         /// <summary>

@@ -1,0 +1,18 @@
+{
+  "RecruitKey": "G",
+  "ShowStateLabel": true,
+  "ShowNotifications": true,
+  "FollowDelayFrames": 20,
+  "FollowMinDistance": 48.0,
+  "AutoWater": true,
+  "AutoHarvest": true,
+  "AutoFight": true,
+  "AutoChopTrees": false,
+  "AutoMine": false,
+  "CombatInterval": 1.5,
+  "CombatRange": 128.0,
+  "SharePlayerStamina": true,
+  "StaminaMultiplier": 1.0,
+  "ShadowInventorySize": 12,
+  "AutoTransferToPlayer": true
+}

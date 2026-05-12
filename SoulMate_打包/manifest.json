@@ -1,0 +1,10 @@
+{
+  "Name": "SoulMate - 灵魂伴侣",
+  "Author": "Koko",
+  "Version": "0.3.0",
+  "Description": "灵魂伴侣 - 二状态镜像AI | 右键开伴侣箱子 | 10格无敌打怪 | 砍树/浇水/锄地/钓鱼秒上钩 | 抚摸动物+收集凋落物",
+  "UniqueID": "Koko.SoulMate",
+  "EntryDll": "SoulMate.dll",
+  "MinimumApiVersion": "4.0.0",
+  "UpdateKeys": []
+}
