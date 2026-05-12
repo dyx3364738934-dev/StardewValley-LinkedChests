@@ -22,9 +22,10 @@ namespace LinkedChests
         // 运行时反射缓存的 CraftingPage 字段信息
         private static FieldInfo? _craftingListField;
 
-        // 虚拟滚轮
+        // ── 按箱子滚轮 ──
         private static List<(Chest chest, Vector2 tile)>? _linkedGroup;
         private static int _groupIndex;
+        private static bool _isReopening;    // 大小切换中，防止 CloseCleanup 清空状态
 
         public static void Apply(Harmony harmony)
         {
@@ -287,18 +288,30 @@ namespace LinkedChests
             if (_linkedGroup == null || __instance is not ItemGrabMenu grab) return true;
 
             int n = _linkedGroup.Count;
-            _groupIndex = (_groupIndex + (direction > 0 ? -1 : 1) + n) % n;
-            var target = _linkedGroup[_groupIndex].chest;
+            int newIdx = (_groupIndex + (direction > 0 ? -1 : 1) + n) % n;
+            var target = _linkedGroup[newIdx].chest;
+            var src = _linkedGroup[_groupIndex].chest;
 
-            // 替换 context
+            // 大小箱子容量不同 → 关闭当前菜单、打开目标菜单（原生 UI）
+            if (ChestLinker.GetChestCapacity(target) != ChestLinker.GetChestCapacity(src))
+            {
+                _isReopening = true;
+                _groupIndex = newIdx;
+                grab.exitThisMenu(false);
+                target.ShowMenu();
+                _isReopening = false;
+                return false;
+            }
+
+            // 同大小 → 原地替换 context/items/delegates
+            _groupIndex = newIdx;
+
             typeof(ItemGrabMenu).GetField("context", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
                 ?.SetValue(grab, target);
 
-            // 替换 actualInventory
             var itemsMenu = grab.ItemsToGrabMenu;
             if (itemsMenu != null) itemsMenu.actualInventory = target.Items;
 
-            // 替换 behavior 回调
             var bt = typeof(ItemGrabMenu).GetNestedType("behaviorOnItemSelect", BindingFlags.Public | BindingFlags.NonPublic);
             if (bt != null)
             {
@@ -313,6 +326,7 @@ namespace LinkedChests
 
         private static void Postfix_CloseCleanup()
         {
+            if (_isReopening) return;   // 大小切换中，不清理
             _linkedGroup = null; _groupIndex = 0;
         }
 
